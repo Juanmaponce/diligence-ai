@@ -38,6 +38,9 @@ Thumbs.db
 chroma_data/
 *.db
 
+# Sample documents
+sample_docs/
+
 # Test artifacts
 .pytest_cache/
 htmlcov/
