@@ -1,0 +1,78 @@
+services:
+  chromadb:
+    image: chromadb/chroma:0.5.15
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=false
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8000'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # If you have an NVIDIA GPU, uncomment:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - OLLAMA_HOST=ollama
+      - OLLAMA_PORT=11434
+      - EMBED_MODEL=nomic-embed-text
+      - CHAT_MODEL=llama3.2
+      - API_KEY=${API_KEY:-}
+    depends_on:
+      chromadb:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    volumes:
+      - ./app:/app/app
+      - ./sample_docs:/app/sample_docs
+
+  mcp:
+    build:
+      context: ./mcp_server
+      dockerfile: Dockerfile
+    ports:
+      - "9000:9000"
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - OLLAMA_HOST=ollama
+      - OLLAMA_PORT=11434
+      - FASTAPI_HOST=api
+      - FASTAPI_PORT=8000
+      - EMBED_MODEL=nomic-embed-text
+      - COLLECTION_NAME=financial_docs
+      - API_KEY=${API_KEY:-}
+    depends_on:
+      chromadb:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      api:
+        condition: service_started
+
+volumes:
+  chroma_data:
+  ollama_data:
