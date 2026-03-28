@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
     api_key: str = ""  # If empty, auth is disabled (dev mode)
     max_content_length: int = 2_000_000  # ~2MB of text
+    max_upload_size_mb: int = 50  # Maximum file upload size in MB
 
     @property
     def ollama_base_url(self) -> str:

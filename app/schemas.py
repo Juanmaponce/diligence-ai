@@ -47,6 +47,13 @@ class AnalysisResponse(BaseModel):
     sources_used: list[str]
 
 
+class FileUploadResponse(BaseModel):
+    doc_id: str
+    file_type: str
+    chunks_stored: int
+    message: str
+
+
 class HealthResponse(BaseModel):
     status: str
     chromadb: str

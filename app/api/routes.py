@@ -1,15 +1,18 @@
+import json
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 
 from app.agent.analyst import run_analysis
 from app.auth import require_api_key
 from app.config import settings
+from app.rag.extractors import FileType, detect_file_type, extract_text
 from app.rag.ingestion import ingest_document
 from app.schemas import (
     AnalysisRequest,
     AnalysisResponse,
+    FileUploadResponse,
     HealthResponse,
     IngestRequest,
     IngestResponse,
@@ -100,6 +103,90 @@ async def ingest(body: IngestRequest):
         doc_id=body.doc_id,
         chunks_stored=chunks_stored,
         message=f"Document '{body.doc_id}' ingested successfully ({chunks_stored} chunks).",
+    )
+
+
+# ---------------------------------------------------------------------------
+# File upload (authenticated)
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/documents/upload",
+    response_model=FileUploadResponse,
+    status_code=201,
+    tags=["rag"],
+)
+async def upload_document(
+    file: UploadFile,
+    doc_id: str = Form(..., description="Unique identifier for the document"),
+    metadata: str = Form(
+        default="{}",
+        description='JSON string with optional metadata, e.g. {"company":"Acme","year":2024}',
+    ),
+):
+    """
+    Upload a PDF or Excel file (.pdf, .xlsx, .xls) for ingestion.
+
+    The file is parsed into text, then chunked, embedded, and stored
+    in the vector database — just like the /documents endpoint but
+    accepting binary files instead of raw text.
+    """
+    # --- validate metadata JSON ---
+    try:
+        meta = json.loads(metadata)
+        if not isinstance(meta, dict):
+            raise ValueError
+    except (json.JSONDecodeError, ValueError):
+        raise HTTPException(status_code=422, detail="metadata must be a valid JSON object.")
+
+    # --- validate file size ---
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    file_bytes = await file.read()
+    if len(file_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {settings.max_upload_size_mb} MB limit.",
+        )
+    if not file_bytes:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty.")
+
+    # --- detect and validate file type ---
+    try:
+        file_type = detect_file_type(file.filename or "", file.content_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    # --- extract text ---
+    try:
+        text = extract_text(file_bytes, file_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception:
+        logger.exception("Failed to extract text from uploaded file")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to extract text from the uploaded file.",
+        )
+
+    # --- ingest into vector store ---
+    try:
+        chunks_stored = await ingest_document(
+            content=text,
+            doc_id=doc_id,
+            metadata=meta,
+        )
+    except httpx.HTTPError:
+        logger.exception("Embedding service error during file upload ingestion")
+        raise HTTPException(status_code=502, detail="Embedding service is temporarily unavailable.")
+    except Exception:
+        logger.exception("Unexpected error during file upload ingestion")
+        raise HTTPException(status_code=500, detail="An internal error occurred. Please try again later.")
+
+    return FileUploadResponse(
+        doc_id=doc_id,
+        file_type=file_type.value,
+        chunks_stored=chunks_stored,
+        message=f"File '{file.filename}' ingested as '{doc_id}' ({chunks_stored} chunks).",
     )
 
 
