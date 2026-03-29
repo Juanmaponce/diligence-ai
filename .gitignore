@@ -41,6 +41,9 @@ chroma_data/
 # Sample documents
 sample_docs/
 
+# Claude Code
+.claude/
+
 # Test artifacts
 .pytest_cache/
 htmlcov/
